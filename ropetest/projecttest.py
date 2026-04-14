@@ -389,7 +389,7 @@ class ProjectTest(unittest.TestCase):
         sample_file = self.project.root.create_file("my_file.txt")
         contents = (
             b"# -*- coding: utf-8 -*-\n"
-            + br"#\N{LATIN SMALL LETTER I WITH DIAERESIS}\n"
+            + rb"#\N{LATIN SMALL LETTER I WITH DIAERESIS}\n"
         ).decode("utf8")
         file = open(sample_file.real_path, "wb")
         file.write(contents.encode("utf-8"))
@@ -399,14 +399,14 @@ class ProjectTest(unittest.TestCase):
     def test_file_encoding_writing(self):
         sample_file = self.project.root.create_file("my_file.txt")
         contents = (
-            b"# -*- coding: utf-8 -*-\n" + br"\N{LATIN SMALL LETTER I WITH DIAERESIS}\n"
+            b"# -*- coding: utf-8 -*-\n" + rb"\N{LATIN SMALL LETTER I WITH DIAERESIS}\n"
         ).decode("utf8")
         sample_file.write(contents)
         self.assertEqual(contents, sample_file.read())
 
     def test_using_utf8_when_writing_in_case_of_errors(self):
         sample_file = self.project.root.create_file("my_file.txt")
-        contents = br"\n\N{LATIN SMALL LETTER I WITH DIAERESIS}\n".decode("utf8")
+        contents = rb"\n\N{LATIN SMALL LETTER I WITH DIAERESIS}\n".decode("utf8")
         sample_file.write(contents)
         self.assertEqual(contents, sample_file.read())
 
@@ -1142,12 +1142,14 @@ class RopeFolderTest(unittest.TestCase):
         config = self.project.get_file(".ropeproject/config.py")
         if not config.exists():
             config.create()
-        config.write(dedent("""\
+        config.write(
+            dedent("""\
             def set_prefs(prefs):
                 prefs["ignored_resources"] = ["myfile.txt"]
             def project_opened(project):
                 project.root.create_file("loaded")
-        """))
+        """)
+        )
         self.project.close()
         self.project = Project(self.project.address)
         self.assertTrue(self.project.get_file("loaded").exists())
@@ -1159,10 +1161,12 @@ class RopeFolderTest(unittest.TestCase):
         config = self.project.get_file("pyproject.toml")
         if not config.exists():
             config.create()
-        config.write(dedent("""\
+        config.write(
+            dedent("""\
             [tool.rope]
             ignored_resources=["pyproject.py"]
-        """))
+        """)
+        )
         self.project.close()
         self.project = Project(self.project.address)
         myfile = self.project.get_file("pyproject.py")
@@ -1184,10 +1188,12 @@ class RopeFolderTest(unittest.TestCase):
         config = self.project.get_file("pyproject.toml")
         if not config.exists():
             config.create()
-        config.write(dedent("""\
+        config.write(
+            dedent("""\
             [project]
             name = 'testproject'
-        """))
+        """)
+        )
         self.project.close()
         self.project = Project(self.project.address)
         myfile = self.project.get_file("pyproject.py")
@@ -1198,10 +1204,12 @@ class RopeFolderTest(unittest.TestCase):
         config = self.project.get_file("pyproject.toml")
         if not config.exists():
             config.create()
-        config.write(dedent("""\
+        config.write(
+            dedent("""\
             [tool.anothertool]
             name = 'testproject'
-        """))
+        """)
+        )
         self.project.close()
         self.project = Project(self.project.address)
         myfile = self.project.get_file("pyproject.py")
