@@ -61,8 +61,29 @@ class FileSystemCommands:
         with open(path, "rb") as handle:
             return handle.read()
 
+    def exists(self, path):
+        return os.path.exists(path)
 
-class SubversionCommands:
+    def isfile(self, path):
+        return os.path.isfile(path)
+
+    def isdir(self, path):
+        return os.path.isdir(path)
+
+    def listdir(self, path):
+        return os.listdir(path)
+
+    def getmtime(self, path):
+        return os.path.getmtime(path)
+
+    def getsize(self, path):
+        return os.path.getsize(path)
+
+    def islink(self, path):
+        return os.path.islink(path)
+
+
+class SubversionCommands(FileSystemCommands):
     def __init__(self, *args):
         self.normal_actions = FileSystemCommands()
         import pysvn  # type:ignore
@@ -90,7 +111,7 @@ class SubversionCommands:
         return self.normal_actions.read(path)
 
 
-class MercurialCommands:
+class MercurialCommands(FileSystemCommands):
     def __init__(self, root):
         self.hg = self._import_mercurial()
         self.normal_actions = FileSystemCommands()
@@ -141,7 +162,7 @@ class MercurialCommands:
         return self.normal_actions.read(path)
 
 
-class GITCommands:
+class GITCommands(FileSystemCommands):
     def __init__(self, root):
         self.root = root
         self._do(["version"])
@@ -176,7 +197,7 @@ class GITCommands:
         return self.root
 
 
-class DarcsCommands:
+class DarcsCommands(FileSystemCommands):
     def __init__(self, root):
         self.root = root
         self.normal_actions = FileSystemCommands()

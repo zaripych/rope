@@ -980,6 +980,27 @@ class _MockFSCommands:
         self.log += "read "
         return self.fscommands.read(path)
 
+    def exists(self, path):
+        return self.fscommands.exists(path)
+
+    def isfile(self, path):
+        return self.fscommands.isfile(path)
+
+    def isdir(self, path):
+        return self.fscommands.isdir(path)
+
+    def listdir(self, path):
+        return self.fscommands.listdir(path)
+
+    def getmtime(self, path):
+        return self.fscommands.getmtime(path)
+
+    def getsize(self, path):
+        return self.fscommands.getsize(path)
+
+    def islink(self, path):
+        return self.fscommands.islink(path)
+
 
 class _DeprecatedFSCommands:
     def __init__(self):
@@ -1001,6 +1022,27 @@ class _DeprecatedFSCommands:
     def remove(self, path):
         self.log += "remove "
         self.fscommands.remove(path)
+
+    def exists(self, path):
+        return self.fscommands.exists(path)
+
+    def isfile(self, path):
+        return self.fscommands.isfile(path)
+
+    def isdir(self, path):
+        return self.fscommands.isdir(path)
+
+    def listdir(self, path):
+        return self.fscommands.listdir(path)
+
+    def getmtime(self, path):
+        return self.fscommands.getmtime(path)
+
+    def getsize(self, path):
+        return self.fscommands.getsize(path)
+
+    def islink(self, path):
+        return self.fscommands.islink(path)
 
 
 class RopeFolderTest(unittest.TestCase):
