@@ -28,20 +28,20 @@ def session_venv_pyvenv_cfg(session_venv):
 
 @pytest.fixture(scope="session")
 def session_venv_site_packages(session_venv, session_venv_pyvenv_cfg):
-    if os.name == 'nt':
+    if os.name == "nt":
         return session_venv / f"Lib/site-packages"
     else:
         major, minor, patch = session_venv_pyvenv_cfg["version"].split(".")
         return session_venv / f"lib/python{major}.{minor}/site-packages"
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def session_venv_python_executable(session_venv):
     # Get the path to the Python executable inside the venv
-    if os.name == 'nt':
-        python_executable = session_venv / 'Scripts' / 'python.exe'
+    if os.name == "nt":
+        python_executable = session_venv / "Scripts" / "python.exe"
     else:
-        python_executable = session_venv / 'bin' / 'python'
+        python_executable = session_venv / "bin" / "python"
 
     # Yield the Python executable path
     yield python_executable
@@ -78,6 +78,7 @@ Standard project structure for pytest fixtures
 /pkg1/mod2.py       -- mod2
 """
 
+
 @pytest.fixture
 def mod1(project) -> resources.File:
     return testutils.create_module(project, "mod1")
@@ -95,13 +96,24 @@ def mod2(project, pkg1) -> resources.Folder:
 
 @pytest.fixture(scope="session")
 def external_fixturepkg(session_venv, session_venv_python_executable):
-    check_call([
-        session_venv_python_executable,
-        "-m",
-        "pip",
-        "install",
-        "--force-reinstall",
-        "ropetest-package-fixtures/external_fixturepkg/dist/external_fixturepkg-1.0.0-py3-none-any.whl",
-    ])
+    check_call(
+        [
+            session_venv_python_executable,
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            "ropetest-package-fixtures/external_fixturepkg/dist/external_fixturepkg-1.0.0-py3-none-any.whl",
+        ]
+    )
     yield
-    check_call([session_venv_python_executable, "-m", "pip", "uninstall", "--yes", "external-fixturepkg"])
+    check_call(
+        [
+            session_venv_python_executable,
+            "-m",
+            "pip",
+            "uninstall",
+            "--yes",
+            "external-fixturepkg",
+        ]
+    )
