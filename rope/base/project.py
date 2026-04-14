@@ -46,13 +46,13 @@ class _Project:
 
         """
         path = self._get_resource_path(resource_name)
-        if not os.path.exists(path):
+        if not self.fscommands.exists(path):
             raise exceptions.ResourceNotFoundError(
                 "Resource <%s> does not exist" % resource_name
             )
-        elif os.path.isfile(path):
+        elif self.fscommands.isfile(path):
             return File(self, resource_name)
-        elif os.path.isdir(path):
+        elif self.fscommands.isdir(path):
             return Folder(self, resource_name)
         else:
             raise exceptions.ResourceNotFoundError("Unknown resource " + resource_name)
@@ -215,12 +215,17 @@ class Project(_Project):
         assert isinstance(projectroot, str)
         self._address = projectroot
         self._ropefolder_name = ropefolder
-        if not os.path.exists(self._address):
-            os.mkdir(self._address)
-        elif not os.path.isdir(self._address):
-            raise exceptions.RopeError("Project root exists and" " is not a directory")
         if fscommands is None:
+            if not os.path.exists(self._address):
+                os.mkdir(self._address)
+            elif not os.path.isdir(self._address):
+                raise exceptions.RopeError("Project root exists and is not a directory")
             fscommands = rope.base.fscommands.create_fscommands(self._address)
+        else:
+            if not fscommands.exists(self._address):
+                fscommands.create_folder(self._address)
+            elif not fscommands.isdir(self._address):
+                raise exceptions.RopeError("Project root exists and is not a directory")
         super().__init__(fscommands)
         self.ignored = _ResourceMatcher()
         self.file_list = _FileListCacher(self)

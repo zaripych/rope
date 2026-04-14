@@ -28,7 +28,6 @@ from and writing to the resource, moving the resource, etc.
 
 import os
 import re
-import warnings
 from pathlib import Path
 
 from rope.base import change, exceptions, fscommands
@@ -74,7 +73,7 @@ class Resource(os.PathLike):
         """Create this resource"""
 
     def exists(self):
-        return os.path.exists(self)
+        return self.project.fscommands.exists(self.real_path)
 
     @property
     def parent(self):
@@ -135,14 +134,6 @@ class File(Resource):
             raise exceptions.ModuleDecodeError(self.path, e.reason)
 
     def read_bytes(self):
-        if not hasattr(self.project.fscommands, "read"):
-            warnings.warn(
-                "FileSystemCommands should implement read() method",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            with open(self, "rb") as handle:
-                return handle.read()
         return self.project.fscommands.read(self.real_path)
 
     def write(self, contents):
@@ -171,7 +162,7 @@ class Folder(Resource):
     def get_children(self):
         """Return the children of this folder"""
         try:
-            children = os.listdir(self)
+            children = self.project.fscommands.listdir(self.real_path)
         except OSError:
             return []
         result = []
@@ -260,8 +251,7 @@ class _ResourceMatcher:
         for pattern in self.compiled_patterns:
             if pattern.match(resource.path):
                 return True
-        path = os.path.join(resource.project.address, *resource.path.split("/"))
-        return os.path.islink(path)
+        return resource.project.fscommands.islink(resource.real_path)
 
     @property
     def compiled_patterns(self):

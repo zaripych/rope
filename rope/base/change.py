@@ -1,6 +1,5 @@
 import datetime
 import difflib
-import os
 import time
 from typing import Union
 
@@ -367,7 +366,7 @@ class _ResourceOperations:
 
     def _create_resource(self, file_name, kind="file"):
         resource_path = self.project._get_resource_path(file_name)
-        if os.path.exists(resource_path):
+        if self.project.fscommands.exists(resource_path):
             raise exceptions.RopeError("Resource <%s> already exists" % resource_path)
         resource = self.project.get_file(file_name)
         if not resource.parent.exists():
@@ -386,7 +385,7 @@ class _ResourceOperations:
 
 def _get_destination_for_move(resource, destination):
     dest_path = resource.project._get_resource_path(destination)
-    if os.path.isdir(dest_path):
+    if resource.project.fscommands.isdir(dest_path):
         if destination != "":
             return destination + "/" + resource.name
         else:
