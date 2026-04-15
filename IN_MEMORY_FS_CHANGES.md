@@ -14,6 +14,187 @@ The full design rationale lives in `MASTER_PLAN_ROPE_FS_REFACTOR.md`.
 
 ---
 
+## How to use the API
+
+Three entry points depending on what you need.
+
+### 1. Snapshot a real project, refactor in memory
+
+The common case: load a real codebase once, then run refactorings
+without touching the disk.
+
+```python
+from rope.base.inmemory import in_memory_project
+from rope.refactor.rename import Rename
+
+project = in_memory_project("/path/to/your/codebase")
+
+# Resolve a resource and run a rename — exactly the same API as a
+# disk-backed Project.
+mod = project.get_resource("pkg/module.py")
+offset = mod.read().index("old_name")
+changes = Rename(project, mod, offset).get_changes("new_name")
+project.do(changes)
+
+# The change is visible in memory only. Disk is untouched.
+assert "new_name" in mod.read()
+
+project.close()
+```
+
+`in_memory_project(root_path, ignored_patterns=None, **prefs)` —
+`root_path` must be an absolute path to a real directory.
+
+`**prefs` is forwarded **verbatim to `rope.base.project.Project(...)`**
+as its own `**prefs`. Anything `Project.__init__` accepts, this
+accepts: project preferences like `ignored_resources`, `python_path`,
+`source_folders`, `max_history_items`, etc.
+
+Two `Project` arguments are **not user-overridable** — the factory
+owns them:
+
+- `fscommands` — always set to the snapshot-populated
+  `InMemoryFileSystemCommands`.
+- `ropefolder` — always `None` (the `.ropeproject/` persistence layer
+  has direct `open()` calls that don't route through `fscommands`;
+  see Phase 3 scope boundary).
+
+Five preferences default to `False` because the corresponding features
+need real disk or subprocess access; pass any of them explicitly in
+`**prefs` to override:
+
+```python
+# Defaults applied by in_memory_project():
+save_objectdb=False, save_history=False, validate_objectdb=False,
+automatic_soa=False, import_dynload_stdmods=False
+
+# Example: custom project preferences on top of the defaults
+project = in_memory_project(
+    "/path/to/repo",
+    python_path=["/extra/sys/path"],           # forwarded to Project
+    source_folders=["src"],                    # forwarded to Project
+    ignored_resources=["generated", "*.pb2.py"],  # forwarded to Project
+)
+```
+
+Default ignored patterns (for the *snapshot* — separate from rope's
+own `ignored_resources` preference):
+
+`.ropeproject`, `*.pyc`, `.git`, `.hg`, `.svn`, `__pycache__`,
+`.tox`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.claude`
+
+Pass `ignored_patterns=[...]` to override (the default list is
+exported as `DEFAULT_IGNORED_PATTERNS` in `rope/base/inmemory.py` if
+you want to extend rather than replace).
+
+### 2. Build an in-memory project from scratch (no disk snapshot)
+
+When you want a synthetic project for testing or simulation — no real
+directory to snapshot from.
+
+```python
+from rope.base.fscommands import InMemoryFileSystemCommands
+from rope.base.project import Project
+
+fs = InMemoryFileSystemCommands()
+root = "/virtual/myproject"
+fs._dirs.add(root)                                 # bootstrap the root
+
+project = Project(
+    root,
+    fscommands=fs,
+    ropefolder=None,
+    save_objectdb=False,
+    save_history=False,
+    validate_objectdb=False,
+    automatic_soa=False,
+    import_dynload_stdmods=False,
+)
+
+# Create files through rope's API (goes through fscommands → in-memory)
+from rope.contrib import generate
+mod = generate.create_module(project, "mymod")
+mod.write("x = 1\n")
+```
+
+Note the `fs._dirs.add(root)` bootstrap. `InMemoryFileSystemCommands`
+enforces parent-dir-exists semantics, so the project root itself has
+to be seeded directly (or you need to create `/virtual` first via
+`fs.create_folder("/virtual")` and then call
+`fs.create_folder(root)`). `Project.__init__` will also create the
+root via `fscommands.create_folder()` if the path doesn't exist yet —
+but only if the parent does.
+
+### 3. Hand-populate the in-memory store
+
+For fine-grained control (e.g. building a specific tree shape for a
+test fixture):
+
+```python
+from rope.base.fscommands import InMemoryFileSystemCommands
+
+fs = InMemoryFileSystemCommands()
+
+# Mkdir equivalents
+fs.create_folder("/virtual")
+fs.create_folder("/virtual/proj")
+fs.create_folder("/virtual/proj/pkg")
+
+# Write files (parent dirs must already exist)
+fs.write("/virtual/proj/pkg/__init__.py", b"")
+fs.write("/virtual/proj/pkg/mod.py", b"def hello():\n    return 'hi'\n")
+
+# All the usual os.* equivalents work
+assert fs.exists("/virtual/proj/pkg/mod.py")
+assert fs.isfile("/virtual/proj/pkg/mod.py")
+assert fs.isdir("/virtual/proj/pkg")
+assert fs.listdir("/virtual/proj/pkg") == ["__init__.py", "mod.py"]
+assert fs.read("/virtual/proj/pkg/mod.py") == b"def hello():\n    return 'hi'\n"
+```
+
+Error behaviour matches `os.*` / `shutil.*` exactly — see the
+"Phase 3" table below and the edge-case tests in
+`ropetest/inmemorytest.py`.
+
+### 4. Validate that rope's refactoring engine works in memory
+
+To run rope's own refactor test suite against the in-memory backend as
+a smoke test (useful after upgrading rope or changing fscommands):
+
+```bash
+# Disk baseline
+.venv/bin/python -m pytest ropetest/refactor/ -q
+
+# Same tests, in-memory
+ROPE_TEST_INMEMORY=1 .venv/bin/python -m pytest ropetest/refactor/ -q
+```
+
+Both should report identical counts (943 passed, 7 skipped, 1 xfailed
+at time of writing). See Phase 4 below for how the env var is wired.
+
+### Caveats
+
+- **No persistence.** `ropefolder=None` disables `.ropeproject/`, so
+  undo history, object database, and project config are not saved.
+  The in-memory project is a transient workspace.
+- **Paths must be absolute strings.** The in-memory store keys on the
+  raw path. Mixing `pathlib.Path` and `str`, or relative and absolute
+  paths, will silently miss entries.
+- **Parent directories must exist before children.**
+  `create_folder("/virtual/a/b")` fails unless `/virtual/a` already
+  exists. Use `in_memory_project()` (which handles the whole tree) or
+  seed parents explicitly.
+- **Symlinks are not modelled.** `islink()` always returns `False`.
+- **`rope/contrib/autoimport/` does not work in-memory** (it uses
+  `pathlib.Path` directly, bypassing fscommands). See Phase 4's
+  "Tests that fail" section for details.
+- **Dynamic object analysis (`rope.base.oi.doa`)** spawns Python
+  subprocesses on the project root, so it cannot work against virtual
+  paths. Keep `automatic_soa=False` (the default for
+  `in_memory_project()`).
+
+---
+
 ## Phase 1 — Extend `FileSystemCommands` with read-side methods
 
 **Commit:** [8938eae5](../../commit/8938eae5) — `refactor(fscommands): add read-side methods to FileSystemCommands`
