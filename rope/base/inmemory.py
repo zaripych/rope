@@ -23,6 +23,7 @@ DEFAULT_IGNORED_PATTERNS = [
     "venv",
     ".mypy_cache",
     ".pytest_cache",
+    ".claude",
 ]
 
 
