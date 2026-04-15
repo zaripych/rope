@@ -226,6 +226,212 @@ class DarcsCommands(FileSystemCommands):
         _execute(["darcs"] + args, cwd=self.root)
 
 
+class InMemoryFileSystemCommands(FileSystemCommands):
+    """Filesystem commands backed by an in-memory store.
+
+    All paths are absolute. Populated either programmatically or via
+    ``snapshot_project()`` in ``rope.base.inmemory``, then all subsequent
+    reads/writes go to memory.
+    """
+
+    def __init__(self):
+        self._files: dict[str, bytes] = {}
+        self._dirs: set[str] = set()
+        self._mtimes: dict[str, float] = {}
+        self._clock: float = 0.0
+
+    # -- internal helpers --------------------------------------------------
+
+    def _normalize(self, path: str) -> str:
+        stripped = path.rstrip("/\\")
+        return stripped if stripped else path
+
+    def _tick(self) -> float:
+        self._clock += 1.0
+        return self._clock
+
+    def _parent(self, path: str):
+        parent = os.path.dirname(path)
+        return parent if parent != path else None
+
+    def _touch_parents(self, path: str) -> None:
+        parent = self._parent(path)
+        while parent is not None and parent in self._dirs:
+            self._mtimes[parent] = self._tick()
+            parent = self._parent(parent)
+
+    def _check_parent_exists(self, path: str) -> None:
+        parent = self._parent(path)
+        if parent is not None and parent not in self._dirs:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+
+    # -- write operations --------------------------------------------------
+
+    def create_file(self, path):
+        path = self._normalize(path)
+        if path in self._dirs:
+            raise IsADirectoryError(f"Is a directory: '{path}'")
+        self._check_parent_exists(path)
+        self._files[path] = b""
+        self._mtimes[path] = self._tick()
+        self._touch_parents(path)
+
+    def create_folder(self, path):
+        path = self._normalize(path)
+        if path in self._files or path in self._dirs:
+            raise FileExistsError(f"File exists: '{path}'")
+        self._check_parent_exists(path)
+        self._dirs.add(path)
+        self._mtimes[path] = self._tick()
+        self._touch_parents(path)
+
+    def write(self, path, data):
+        path = self._normalize(path)
+        if path in self._dirs:
+            raise IsADirectoryError(f"Is a directory: '{path}'")
+        self._check_parent_exists(path)
+        self._files[path] = data
+        self._mtimes[path] = self._tick()
+        self._touch_parents(path)
+
+    def move(self, path, new_location):
+        path = self._normalize(path)
+        new_location = self._normalize(new_location)
+
+        if path == new_location:
+            return
+
+        is_file = path in self._files
+        is_dir = path in self._dirs
+
+        if not is_file and not is_dir:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+
+        if is_file:
+            new_parent = self._parent(new_location)
+            if new_parent is not None and new_parent not in self._dirs:
+                raise FileNotFoundError(f"No such file or directory: '{new_location}'")
+            self._files[new_location] = self._files.pop(path)
+            self._mtimes[new_location] = self._tick()
+            self._mtimes.pop(path, None)
+            self._touch_parents(path)
+            self._touch_parents(new_location)
+        else:
+            # Directory move — match shutil.move semantics
+            if new_location in self._files:
+                raise FileExistsError(f"File exists: '{new_location}'")
+
+            if new_location in self._dirs:
+                # shutil.move moves src INTO existing dest dir
+                basename = os.path.basename(path)
+                final = os.path.join(new_location, basename)
+                if final in self._dirs or final in self._files:
+                    raise shutil.Error(f"Destination path '{final}' already exists")
+                new_location = final
+
+            new_parent = self._parent(new_location)
+            if new_parent is not None and new_parent not in self._dirs:
+                raise FileNotFoundError(f"No such file or directory: '{new_location}'")
+
+            old_prefix = path + "/"
+            new_prefix = new_location + "/"
+
+            # Move directory entry
+            self._dirs.discard(path)
+            self._dirs.add(new_location)
+            self._mtimes[new_location] = self._mtimes.pop(path, self._tick())
+
+            # Move all children
+            for old_p in list(self._files):
+                if old_p.startswith(old_prefix):
+                    new_p = new_prefix + old_p[len(old_prefix) :]
+                    self._files[new_p] = self._files.pop(old_p)
+                    self._mtimes[new_p] = self._mtimes.pop(old_p, self._tick())
+            for old_p in list(self._dirs):
+                if old_p.startswith(old_prefix):
+                    new_p = new_prefix + old_p[len(old_prefix) :]
+                    self._dirs.discard(old_p)
+                    self._dirs.add(new_p)
+                    self._mtimes[new_p] = self._mtimes.pop(old_p, self._tick())
+
+            self._touch_parents(path)
+            self._touch_parents(new_location)
+
+    def remove(self, path):
+        path = self._normalize(path)
+        if path in self._files:
+            del self._files[path]
+            self._mtimes.pop(path, None)
+            self._touch_parents(path)
+        elif path in self._dirs:
+            prefix = path + "/"
+            for p in [k for k in self._files if k.startswith(prefix)]:
+                del self._files[p]
+                self._mtimes.pop(p, None)
+            for p in [k for k in self._dirs if k.startswith(prefix)]:
+                self._dirs.discard(p)
+                self._mtimes.pop(p, None)
+            self._dirs.discard(path)
+            self._mtimes.pop(path, None)
+            self._touch_parents(path)
+        else:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+
+    # -- read operations ---------------------------------------------------
+
+    def read(self, path):
+        path = self._normalize(path)
+        if path in self._dirs:
+            raise IsADirectoryError(f"Is a directory: '{path}'")
+        if path not in self._files:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+        return self._files[path]
+
+    def exists(self, path):
+        path = self._normalize(path)
+        return path in self._files or path in self._dirs
+
+    def isfile(self, path):
+        path = self._normalize(path)
+        return path in self._files
+
+    def isdir(self, path):
+        path = self._normalize(path)
+        return path in self._dirs
+
+    def listdir(self, path):
+        path = self._normalize(path)
+        if path in self._files:
+            raise NotADirectoryError(f"Not a directory: '{path}'")
+        if path not in self._dirs:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+        children: set[str] = set()
+        for p in self._files:
+            if os.path.dirname(p) == path:
+                children.add(os.path.basename(p))
+        for p in self._dirs:
+            if os.path.dirname(p) == path:
+                children.add(os.path.basename(p))
+        return sorted(children)
+
+    def getmtime(self, path):
+        path = self._normalize(path)
+        if path not in self._files and path not in self._dirs:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+        return self._mtimes.get(path, 0.0)
+
+    def getsize(self, path):
+        path = self._normalize(path)
+        if path in self._files:
+            return len(self._files[path])
+        if path in self._dirs:
+            return 0
+        raise FileNotFoundError(f"No such file or directory: '{path}'")
+
+    def islink(self, path):
+        return False
+
+
 def _execute(args, cwd=None):
     process = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE)
     process.wait()
