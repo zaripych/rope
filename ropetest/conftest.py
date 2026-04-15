@@ -8,6 +8,11 @@ import pytest
 from rope.base import resources
 from ropetest import testutils
 
+if os.environ.get("ROPE_TEST_INMEMORY"):
+    from ropetest import testutils_inmemory
+
+    testutils_inmemory.apply_inmemory_hook()
+
 
 @pytest.fixture(scope="session")
 def session_venv(tmpdir_factory):
