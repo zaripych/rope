@@ -239,6 +239,10 @@ class InMemoryFileSystemCommands(FileSystemCommands):
         self._dirs: set[str] = set()
         self._mtimes: dict[str, float] = {}
         self._clock: float = 0.0
+        # parent directory → set of basenames directly under it.
+        # Maintained eagerly on every mutation so listdir() is O(direct
+        # children) instead of O(total entries in project).
+        self._children: dict[str, set[str]] = {}
 
     # -- internal helpers --------------------------------------------------
 
@@ -253,6 +257,32 @@ class InMemoryFileSystemCommands(FileSystemCommands):
     def _parent(self, path: str):
         parent = os.path.dirname(path)
         return parent if parent != path else None
+
+    def _index_add(self, path: str) -> None:
+        parent = self._parent(path)
+        if parent is not None:
+            self._children.setdefault(parent, set()).add(os.path.basename(path))
+
+    def _index_remove(self, path: str) -> None:
+        parent = self._parent(path)
+        if parent is not None:
+            bucket = self._children.get(parent)
+            if bucket is not None:
+                bucket.discard(os.path.basename(path))
+                if not bucket:
+                    del self._children[parent]
+
+    def _rebuild_index(self) -> None:
+        """Rebuild the children index from _files and _dirs.
+
+        Used by snapshot_project() which populates _files/_dirs in bulk
+        without going through the mutation helpers.
+        """
+        self._children = {}
+        for p in self._files:
+            self._index_add(p)
+        for p in self._dirs:
+            self._index_add(p)
 
     def _touch_parents(self, path: str) -> None:
         parent = self._parent(path)
@@ -272,8 +302,11 @@ class InMemoryFileSystemCommands(FileSystemCommands):
         if path in self._dirs:
             raise IsADirectoryError(f"Is a directory: '{path}'")
         self._check_parent_exists(path)
+        is_new = path not in self._files
         self._files[path] = b""
         self._mtimes[path] = self._tick()
+        if is_new:
+            self._index_add(path)
         self._touch_parents(path)
 
     def create_folder(self, path):
@@ -283,6 +316,7 @@ class InMemoryFileSystemCommands(FileSystemCommands):
         self._check_parent_exists(path)
         self._dirs.add(path)
         self._mtimes[path] = self._tick()
+        self._index_add(path)
         self._touch_parents(path)
 
     def write(self, path, data):
@@ -290,8 +324,11 @@ class InMemoryFileSystemCommands(FileSystemCommands):
         if path in self._dirs:
             raise IsADirectoryError(f"Is a directory: '{path}'")
         self._check_parent_exists(path)
+        is_new = path not in self._files
         self._files[path] = data
         self._mtimes[path] = self._tick()
+        if is_new:
+            self._index_add(path)
         self._touch_parents(path)
 
     def move(self, path, new_location):
@@ -314,6 +351,8 @@ class InMemoryFileSystemCommands(FileSystemCommands):
             self._files[new_location] = self._files.pop(path)
             self._mtimes[new_location] = self._tick()
             self._mtimes.pop(path, None)
+            self._index_remove(path)
+            self._index_add(new_location)
             self._touch_parents(path)
             self._touch_parents(new_location)
         else:
@@ -340,8 +379,11 @@ class InMemoryFileSystemCommands(FileSystemCommands):
             self._dirs.discard(path)
             self._dirs.add(new_location)
             self._mtimes[new_location] = self._mtimes.pop(path, self._tick())
+            self._index_remove(path)
+            self._index_add(new_location)
 
-            # Move all children
+            # Move all children (files and subdirs). Drop the old subtree's
+            # children index entries; they'll be rebuilt under new_prefix.
             for old_p in list(self._files):
                 if old_p.startswith(old_prefix):
                     new_p = new_prefix + old_p[len(old_prefix) :]
@@ -353,6 +395,20 @@ class InMemoryFileSystemCommands(FileSystemCommands):
                     self._dirs.discard(old_p)
                     self._dirs.add(new_p)
                     self._mtimes[new_p] = self._mtimes.pop(old_p, self._tick())
+            # Drop stale children entries under old_prefix, then rebuild
+            # entries for the moved subtree. The subtree is bounded so this
+            # is cheaper than a full reindex.
+            for indexed in list(self._children):
+                if indexed == path or indexed.startswith(old_prefix):
+                    del self._children[indexed]
+            for p in self._files:
+                if p.startswith(new_prefix):
+                    self._index_add(p)
+            for p in self._dirs:
+                if p == new_location or p.startswith(new_prefix):
+                    # new_location itself already added above
+                    if p != new_location:
+                        self._index_add(p)
 
             self._touch_parents(path)
             self._touch_parents(new_location)
@@ -362,6 +418,7 @@ class InMemoryFileSystemCommands(FileSystemCommands):
         if path in self._files:
             del self._files[path]
             self._mtimes.pop(path, None)
+            self._index_remove(path)
             self._touch_parents(path)
         elif path in self._dirs:
             prefix = path + "/"
@@ -373,6 +430,12 @@ class InMemoryFileSystemCommands(FileSystemCommands):
                 self._mtimes.pop(p, None)
             self._dirs.discard(path)
             self._mtimes.pop(path, None)
+            # Drop the whole subtree's children index, then detach `path`
+            # from its parent.
+            for indexed in list(self._children):
+                if indexed == path or indexed.startswith(prefix):
+                    del self._children[indexed]
+            self._index_remove(path)
             self._touch_parents(path)
         else:
             raise FileNotFoundError(f"No such file or directory: '{path}'")
@@ -405,14 +468,7 @@ class InMemoryFileSystemCommands(FileSystemCommands):
             raise NotADirectoryError(f"Not a directory: '{path}'")
         if path not in self._dirs:
             raise FileNotFoundError(f"No such file or directory: '{path}'")
-        children: set[str] = set()
-        for p in self._files:
-            if os.path.dirname(p) == path:
-                children.add(os.path.basename(p))
-        for p in self._dirs:
-            if os.path.dirname(p) == path:
-                children.add(os.path.basename(p))
-        return sorted(children)
+        return sorted(self._children.get(path, ()))
 
     def getmtime(self, path):
         path = self._normalize(path)

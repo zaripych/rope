@@ -71,6 +71,9 @@ def snapshot_project(root_path, ignored_patterns=None):
     # Reset clock so first real mutation starts at 1.0
     fs._clock = 0.0
 
+    # Build the parent→children index from the bulk-populated _files/_dirs.
+    fs._rebuild_index()
+
     return fs
 
 
