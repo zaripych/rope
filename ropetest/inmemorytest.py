@@ -474,6 +474,23 @@ class SnapshotProjectTest(unittest.TestCase):
         finally:
             project.close()
 
+    def test_in_memory_project_filters_python_path_under_root(self):
+        outside = tempfile.mkdtemp(prefix="rope-pypath-test-")
+        try:
+            inside = os.path.join(self.tmpdir, "pkg")
+            project = in_memory_project(self.tmpdir, python_path=[inside, outside])
+            try:
+                real_paths = [
+                    os.path.realpath(folder.real_path)
+                    for folder in project.get_python_path_folders()
+                ]
+                self.assertIn(os.path.realpath(outside), real_paths)
+                self.assertNotIn(os.path.realpath(inside), real_paths)
+            finally:
+                project.close()
+        finally:
+            shutil.rmtree(outside)
+
     def test_in_memory_project_writes_dont_touch_disk(self):
         project = in_memory_project(self.tmpdir)
         try:

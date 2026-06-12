@@ -77,6 +77,31 @@ def snapshot_project(root_path, ignored_patterns=None):
     return fs
 
 
+class InMemoryProject(Project):
+    """Project backed by an in-memory filesystem.
+
+    Excludes python-path folders located under the project root:
+    sys.path often includes in-project source folders (e.g. via
+    editable-install .pth files). For an in-memory project those resolve to
+    real-disk resources, so find_module() would see stale on-disk files once
+    in-memory mutations diverge from the disk state. In-project modules are
+    already covered by the project's source folders.
+    """
+
+    def get_python_path_folders(self):
+        real_root = os.path.realpath(self.address)
+
+        def _in_project(folder):
+            real = os.path.realpath(folder.real_path)
+            return real == real_root or real.startswith(real_root + os.sep)
+
+        return [
+            folder
+            for folder in super().get_python_path_folders()
+            if not _in_project(folder)
+        ]
+
+
 def in_memory_project(root_path, ignored_patterns=None, **prefs):
     """Create a rope Project backed entirely by an in-memory filesystem.
 
@@ -91,7 +116,7 @@ def in_memory_project(root_path, ignored_patterns=None, **prefs):
             to ``None``.
 
     Returns:
-        A rope ``Project`` instance using ``InMemoryFileSystemCommands``.
+        An ``InMemoryProject`` instance using ``InMemoryFileSystemCommands``.
     """
     fs = snapshot_project(root_path, ignored_patterns=ignored_patterns)
     defaults = {
@@ -102,4 +127,4 @@ def in_memory_project(root_path, ignored_patterns=None, **prefs):
         "import_dynload_stdmods": False,
     }
     defaults.update(prefs)
-    return Project(root_path, fscommands=fs, ropefolder=None, **defaults)
+    return InMemoryProject(root_path, fscommands=fs, ropefolder=None, **defaults)
